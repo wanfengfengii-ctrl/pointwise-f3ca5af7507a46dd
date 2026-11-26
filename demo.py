@@ -90,6 +90,155 @@ def run(service, sample, signed_wav):
     }, ensure_ascii=False))
 
 
+def run_cut_demo(service):
+    """Show the two withdrawal orders, takes landing between them, and the final current mix."""
+    from cuts_fixture import LATE_PARTS, prepare
+    from tests.support import pcm
+
+    def call(method, path, body=None, status=None):
+        expected = status if status is not None else (201 if method == 'POST' else 200)
+        actual, payload = service.request(method, path, body)
+        if actual != expected:
+            raise RuntimeError(f'{method} {path} returned {actual}: {payload!r}')
+        return payload
+
+    r0, segments, order_id, edition = prepare(service)
+    base = call('GET', f'/revisions/{r0}')
+    occurrence_names = {}
+    r0_occurrences = _revision_occurrence_ids(service.database, r0)
+    for occurrence_id, name in zip(r0_occurrences, ('A', 'B', 'C', 'D', 'E'), strict=True):
+        occurrence_names[occurrence_id] = name
+
+    jia = call('POST', '/cuts', {
+        'request_id': 'demo-cut-jia', 'revision_id': r0, 'first_slot': 2, 'last_slot': 3,
+    })
+    yi = call('POST', '/cuts', {
+        'request_id': 'demo-cut-yi', 'revision_id': r0, 'first_slot': 3, 'last_slot': 4,
+    })
+    inserted = call('POST', '/inserts', {
+        'request_id': 'demo-insert-x', 'revision_id': r0,
+        'anchor_slot': 3, 'segment_id': segments['X'],
+    })
+    occurrence_names[inserted['occurrence_id']] = 'X'
+
+    def names(mix):
+        return [occurrence_names[entry['occurrence_id']] for entry in mix['timeline']]
+
+    after_edits = call('GET', '/mix/current')
+    # Withdraw Jia first; the late dubbing then arrives while C and D are still hidden.
+    call('POST', f"/cuts/{jia['cut_id']}/withdraw", {'request_id': 'demo-undo-jia'})
+    before_take = call('GET', '/mix/current')
+    receipt = call('POST', f'/voice-orders/{order_id}/takes', {
+        'request_id': 'demo-late-dub', 'parts': [pcm(part) for part in LATE_PARTS],
+    })
+    voiced = call('GET', '/mix/current')
+    service.restart()
+    call('POST', f"/cuts/{yi['cut_id']}/withdraw", {'request_id': 'demo-undo-yi'})
+    restored = call('GET', '/mix/current')
+    playback = call('GET', f"/editions/{edition['edition_id']}")
+
+    print('POINTWISE_SCENARIO ' + json.dumps({
+        'case_id': 'cuts-withdraw-jia-first',
+        'input': {
+            'proof': [entry['segment_id'] for entry in base['slots']],
+            'cuts': {'jia': [2, 3], 'yi': [3, 4]}, 'insert': {'anchor_slot': 3, 'segment': 'X'},
+            'late_parts': [list(part) for part in LATE_PARTS],
+        },
+        'expected': {
+            'after_edits': ['A', 'X', 'E'],
+            'after_withdraw_jia': ['A', 'B', 'X', 'E'],
+            'after_late_dub_frames': [1, 2, 31, 32, 9, 10, 3, 4],
+            'restored': ['A', 'B', 'X', 'C', 'D', 'E'],
+            'restored_frames': [1, 2, 31, 32, 9, 10, 51, 52, 71, 72, 3, 4],
+        },
+        'actual': {
+            'after_edits': names(after_edits),
+            'after_withdraw_jia': names(before_take),
+            'after_late_dub_frames': read_wave(voiced)[2],
+            'restored': names(restored),
+            'restored_frames': read_wave(restored)[2],
+            'restored_origins': origins(restored),
+            'signed_edition_frames': read_wave(playback)[2],
+            'receipt_parts': receipt['parts'],
+        },
+        'code_paths': ['edit/edits.py', 'edit/workspace.py', 'mix/selection.py', 'dubbing/takes.py'],
+        'oracle': '按 CUTS.md 事故样例手算两种撤回顺序的可见出现、逐段出处与 PCM 帧，迟到配音按原出现恢复。',
+    }, ensure_ascii=False))
+    require_equal(names(restored), ['A', 'B', 'X', 'C', 'D', 'E'])
+    require_equal(read_wave(restored)[2], [1, 2, 31, 32, 9, 10, 51, 52, 71, 72, 3, 4])
+    require_equal(read_wave(playback)[2], [1, 2, 3, 4, 5, 6, 7, 8, 3, 4])
+
+
+def run_cut_demo_yi_first(service):
+    """The opposite withdrawal order: withdraw Yi, take delivery, then withdraw Jia."""
+    from cuts_fixture import LATE_PARTS, prepare
+    from tests.support import pcm
+
+    def call(method, path, body=None, status=None):
+        expected = status if status is not None else (201 if method == 'POST' else 200)
+        actual, payload = service.request(method, path, body)
+        if actual != expected:
+            raise RuntimeError(f'{method} {path} returned {actual}: {payload!r}')
+        return payload
+
+    r0, segments, order_id, _ = prepare(service)
+    occurrence_names = {}
+    for occurrence_id, name in zip(_revision_occurrence_ids(service.database, r0),
+                                   ('A', 'B', 'C', 'D', 'E'), strict=True):
+        occurrence_names[occurrence_id] = name
+    jia = call('POST', '/cuts', {
+        'request_id': 'yf-cut-jia', 'revision_id': r0, 'first_slot': 2, 'last_slot': 3,
+    })
+    yi = call('POST', '/cuts', {
+        'request_id': 'yf-cut-yi', 'revision_id': r0, 'first_slot': 3, 'last_slot': 4,
+    })
+    inserted = call('POST', '/inserts', {
+        'request_id': 'yf-insert-x', 'revision_id': r0,
+        'anchor_slot': 3, 'segment_id': segments['X'],
+    })
+    occurrence_names[inserted['occurrence_id']] = 'X'
+
+    def names(mix):
+        return [occurrence_names[entry['occurrence_id']] for entry in mix['timeline']]
+
+    call('POST', f"/cuts/{yi['cut_id']}/withdraw", {'request_id': 'yf-undo-yi'})
+    before_take = call('GET', '/mix/current')
+    call('POST', f'/voice-orders/{order_id}/takes', {
+        'request_id': 'yf-late-dub', 'parts': [pcm(part) for part in LATE_PARTS],
+    })
+    voiced = call('GET', '/mix/current')
+    service.restart()
+    call('POST', f"/cuts/{jia['cut_id']}/withdraw", {'request_id': 'yf-undo-jia'})
+    restored = call('GET', '/mix/current')
+    print('POINTWISE_SCENARIO ' + json.dumps({
+        'case_id': 'cuts-withdraw-yi-first',
+        'expected': {
+            'after_withdraw_yi': ['A', 'X', 'D', 'E'],
+            'after_late_dub_frames': [1, 2, 9, 10, 71, 72, 3, 4],
+            'restored_frames': [1, 2, 31, 32, 9, 10, 51, 52, 71, 72, 3, 4],
+        },
+        'actual': {
+            'after_withdraw_yi': names(before_take),
+            'after_late_dub_frames': read_wave(voiced)[2],
+            'restored': names(restored),
+            'restored_frames': read_wave(restored)[2],
+        },
+        'oracle': '先撤乙只让 D 复归，交件后 D 用新配音；再撤甲 B、C 才用各自实收。',
+    }, ensure_ascii=False))
+    require_equal(names(before_take), ['A', 'X', 'D', 'E'])
+    require_equal(read_wave(voiced)[2], [1, 2, 9, 10, 71, 72, 3, 4])
+    require_equal(read_wave(restored)[2], [1, 2, 31, 32, 9, 10, 51, 52, 71, 72, 3, 4])
+
+
+def _revision_occurrence_ids(database, revision_id):
+    import sqlite3
+    with sqlite3.connect(database) as db:
+        return [row[0] for row in db.execute('''
+            SELECT occurrence_id FROM revision_occurrences
+            WHERE revision_id = ? ORDER BY slot
+        ''', (revision_id,))]
+
+
 def main():
     sample = json.loads((SAMPLES / 'recording.json').read_text(encoding='utf-8'))
     edition_b64 = (SAMPLES / 'edition.wav.b64').read_text(encoding='ascii').strip()
@@ -97,6 +246,10 @@ def main():
     with tempfile.TemporaryDirectory() as temporary:
         with RunningService(Path(temporary) / 'workbench.sqlite3') as service:
             run(service, sample, signed_wav)
+        with RunningService(Path(temporary) / 'cut_workbench.sqlite3') as service:
+            run_cut_demo(service)
+        with RunningService(Path(temporary) / 'cut_yi_first.sqlite3') as service:
+            run_cut_demo_yi_first(service)
 
 
 if __name__ == '__main__':

@@ -5,7 +5,7 @@ from source.segments import UnknownSegment, get_segment
 
 
 @dataclass(frozen=True)
-class RevisionSlot:
+class SequenceSlot:
     slot: int
     segment_id: int
     frame_count: int
@@ -15,7 +15,7 @@ class InvalidSequence(ValueError):
     pass
 
 
-def build_slots(db: Connection, program_id: str, segment_ids: object) -> tuple[RevisionSlot, ...]:
+def build_slots(db: Connection, program_id: str, segment_ids: object) -> tuple[SequenceSlot, ...]:
     if not isinstance(segment_ids, list) or not segment_ids:
         raise InvalidSequence('expected a nonempty list of segment IDs')
     slots = []
@@ -25,5 +25,5 @@ def build_slots(db: Connection, program_id: str, segment_ids: object) -> tuple[R
         segment = get_segment(db, segment_id)
         if segment.program_id != program_id:
             raise UnknownSegment(segment_id)
-        slots.append(RevisionSlot(position, segment.segment_id, segment.frame_count))
+        slots.append(SequenceSlot(position, segment.segment_id, segment.frame_count))
     return tuple(slots)

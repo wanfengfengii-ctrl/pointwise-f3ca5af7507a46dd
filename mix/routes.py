@@ -1,7 +1,8 @@
 from base64 import b64encode
 
 from edit.revisions import UnknownRevision
-from mix.preview import build_preview
+from mix.preview import build_current_preview, build_preview
+from source.programs import UnknownProgram, get_program
 
 
 def preview_response(preview):
@@ -23,6 +24,18 @@ def get_mix(db, revision_id):
     return 200, preview_response(preview)
 
 
+def get_current_mix(db):
+    try:
+        get_program(db, 'G')
+        preview = build_current_preview(db, 'G')
+    except UnknownProgram:
+        return 404, {'error': 'unknown_program'}
+    except LookupError:
+        return 404, {'error': 'no_current_revision'}
+    return 200, preview_response(preview)
+
+
 MIX_ROUTES = (
+    ('GET', r'/mix/current', get_current_mix),
     ('GET', r'/mix/(?P<revision_id>[0-9]{1,19})', get_mix),
 )

@@ -12,8 +12,10 @@ from dubbing.receipts import ensure_receipt_schema
 from dubbing.routes import DUBBING_ROUTES
 from dubbing.takes import ensure_take_schema
 from edit.drafts import ensure_draft_schema
+from edit.edits import ensure_edit_schema
 from edit.revisions import ensure_revision_schema
 from edit.routes import EDIT_ROUTES
+from edit.workspace import ensure_workspace_schema
 from mix.routes import MIX_ROUTES
 from release.editions import ensure_edition_schema
 from release.routes import RELEASE_ROUTES
@@ -25,8 +27,9 @@ from source.segments import ensure_segment_schema
 DEFAULT_PROGRAMS = (ProgramSpec('G', 8000),)
 SCHEMA_STEPS = (
     ensure_program_schema, ensure_source_schema, ensure_segment_schema,
-    ensure_revision_schema, ensure_draft_schema, ensure_order_schema,
-    ensure_take_schema, ensure_receipt_schema, ensure_edition_schema,
+    ensure_revision_schema, ensure_draft_schema, ensure_workspace_schema,
+    ensure_order_schema, ensure_take_schema, ensure_receipt_schema,
+    ensure_edition_schema, ensure_edit_schema,
 )
 ROUTES = tuple(
     (method, re.compile(pattern), handler)
@@ -67,7 +70,14 @@ class Application:
             match = pattern.fullmatch(path)
             if match is None:
                 continue
-            parameters = {name: int(value) for name, value in match.groupdict().items()}
+            parameters = {}
+            for name, value in match.groupdict().items():
+                if value is None:
+                    continue
+                try:
+                    parameters[name] = int(value)
+                except (TypeError, ValueError):
+                    parameters[name] = value
             write = method == 'POST'
             if write and not isinstance(body, dict):
                 return 400, {'error': 'invalid_json_object'}

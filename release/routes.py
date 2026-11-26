@@ -1,7 +1,7 @@
 from edit.revisions import UnknownRevision
 from release.editions import UnknownEdition
 from release.playback import edition_payload, read_playback
-from release.publish import publish_revision
+from release.publish import EmptyRevision, publish_revision
 
 
 def post_editions(db, body):
@@ -12,6 +12,8 @@ def post_editions(db, body):
         edition = publish_revision(db, revision_id)
     except UnknownRevision:
         return 404, {'error': 'unknown_revision'}
+    except EmptyRevision:
+        return 400, {'error': 'empty_revision'}
     return 201, edition_payload(edition)
 
 

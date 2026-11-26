@@ -10,6 +10,7 @@ class ReceivedPart:
     position: int
     slot: int
     frame_count: int
+    occurrence_id: str
     pcm: bytes
 
 
@@ -49,7 +50,10 @@ def record_take(db: Connection, order: VoiceOrder, recordings: tuple[bytes, ...]
         cursor = db.execute('''
             INSERT INTO take_parts (take_id, position, pcm) VALUES (?, ?, ?)
         ''', (take_id, target.position, pcm))
-        parts.append(ReceivedPart(cursor.lastrowid, target.position, target.slot, target.frame_count, pcm))
+        parts.append(ReceivedPart(
+            cursor.lastrowid, target.position, target.slot, target.frame_count,
+            target.occurrence_id, pcm,
+        ))
     return Take(take_id, order.order_id, order.revision_id, tuple(parts))
 
 
@@ -61,7 +65,8 @@ def get_take(db: Connection, take_id: int) -> Take:
     if row is None:
         raise DatabaseError('receipt refers to a missing take')
     parts = db.execute('''
-        SELECT part.part_id, part.position, target.slot, target.frame_count, part.pcm
+        SELECT part.part_id, part.position, target.slot, target.frame_count,
+               target.occurrence_id, part.pcm
         FROM take_parts AS part
         JOIN order_targets AS target ON target.position = part.position AND target.order_id = ?
         WHERE part.take_id = ? ORDER BY part.position
@@ -69,13 +74,14 @@ def get_take(db: Connection, take_id: int) -> Take:
     return Take(*row, tuple(ReceivedPart(*part) for part in parts))
 
 
-def latest_parts(db: Connection, revision_id: int) -> dict[int, ReceivedPart]:
+def latest_parts(db: Connection, revision_id: int) -> dict[str, ReceivedPart]:
+    """Latest successful part per occurrence within one proof's own receipts."""
     rows = db.execute('''
         WITH ranked_parts AS (
             SELECT part.part_id, part.position, target.slot, target.frame_count,
-                   part.pcm, ROW_NUMBER() OVER (
-                       PARTITION BY target.slot ORDER BY take.take_id DESC
-                   ) AS rank_in_slot
+                   target.occurrence_id, part.pcm, ROW_NUMBER() OVER (
+                       PARTITION BY target.occurrence_id ORDER BY take.take_id DESC
+                   ) AS rank_in_occurrence
             FROM voice_orders AS orders
             JOIN takes AS take ON take.order_id = orders.order_id
             JOIN take_parts AS part ON part.take_id = take.take_id
@@ -83,7 +89,31 @@ def latest_parts(db: Connection, revision_id: int) -> dict[int, ReceivedPart]:
               ON target.order_id = orders.order_id AND target.position = part.position
             WHERE orders.revision_id = ?
         )
-        SELECT part_id, position, slot, frame_count, pcm
-        FROM ranked_parts WHERE rank_in_slot = 1
+        SELECT part_id, position, slot, frame_count, occurrence_id, pcm
+        FROM ranked_parts WHERE rank_in_occurrence = 1
     ''', (str(revision_id),))
-    return {row[2]: ReceivedPart(*row) for row in rows}
+    return {row[4]: ReceivedPart(*row) for row in rows}
+
+
+def latest_parts_for_occurrences(db: Connection, occurrence_ids) -> dict[str, ReceivedPart]:
+    """Latest successful part per occurrence across all issuing proofs and work drafts."""
+    if not occurrence_ids:
+        return {}
+    placeholders = ','.join('?' for _ in occurrence_ids)
+    rows = db.execute(f'''
+        WITH ranked_parts AS (
+            SELECT part.part_id, part.position, target.slot, target.frame_count,
+                   target.occurrence_id, part.pcm, ROW_NUMBER() OVER (
+                       PARTITION BY target.occurrence_id ORDER BY take.take_id DESC
+                   ) AS rank_in_occurrence
+            FROM voice_orders AS orders
+            JOIN takes AS take ON take.order_id = orders.order_id
+            JOIN take_parts AS part ON part.take_id = take.take_id
+            JOIN order_targets AS target
+              ON target.order_id = orders.order_id AND target.position = part.position
+            WHERE target.occurrence_id IN ({placeholders})
+        )
+        SELECT part_id, position, slot, frame_count, occurrence_id, pcm
+        FROM ranked_parts WHERE rank_in_occurrence = 1
+    ''', tuple(occurrence_ids))
+    return {row[4]: ReceivedPart(*row) for row in rows}

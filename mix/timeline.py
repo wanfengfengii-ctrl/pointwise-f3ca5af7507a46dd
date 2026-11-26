@@ -13,9 +13,13 @@ class TimelineEntry:
     end_frame: int
     source_kind: str
     source_id: int
+    occurrence_id: str | None = None
 
     def as_dict(self) -> dict:
-        return asdict(self)
+        data = asdict(self)
+        if self.occurrence_id is None:
+            data.pop('occurrence_id')
+        return data
 
 
 @dataclass(frozen=True)
@@ -25,9 +29,9 @@ class Timeline:
     pcm: bytes
 
 
-def assemble_timeline(selection: tuple[SelectedAudio, ...]) -> Timeline:
-    if not selection:
-        raise ValueError('an empty revision cannot be rendered')
+def assemble_timeline(
+    selection: tuple[SelectedAudio, ...], *, with_occurrence: bool = False
+) -> Timeline:
     entries = []
     audio = []
     offset = 0
@@ -36,7 +40,9 @@ def assemble_timeline(selection: tuple[SelectedAudio, ...]) -> Timeline:
             raise ValueError(f'invalid stored PCM length for slot {part.slot}')
         end = offset + part.frame_count
         entries.append(TimelineEntry(
-            part.slot, part.segment_id, part.frame_count, offset, end, part.source_kind, part.source_id,
+            part.slot, part.segment_id, part.frame_count, offset, end,
+            part.source_kind, part.source_id,
+            part.occurrence_id if with_occurrence else None,
         ))
         audio.append(part.pcm)
         offset = end

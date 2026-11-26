@@ -1,5 +1,3 @@
-from dataclasses import asdict
-
 from dubbing.orders import InvalidOrder, UnknownOrder, issue_order
 from dubbing.receipts import RequestConflict
 from dubbing.submissions import InvalidTake, submit_take
@@ -21,7 +19,10 @@ def post_voice_orders(db, body):
         'revision_id': order.revision_id,
         'program_id': order.program_id,
         'sample_rate': order.sample_rate,
-        'targets': [asdict(target) for target in order.targets],
+        'targets': [
+            {'position': target.position, 'slot': target.slot, 'frame_count': target.frame_count}
+            for target in order.targets
+        ],
     }
 
 

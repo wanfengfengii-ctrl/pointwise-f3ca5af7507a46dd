@@ -10,6 +10,7 @@ class OrderTarget:
     position: int
     slot: int
     frame_count: int
+    occurrence_id: str
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,7 @@ def ensure_order_schema(db: Connection) -> None:
             position INTEGER NOT NULL CHECK (position > 0),
             slot INTEGER NOT NULL CHECK (slot > 0),
             frame_count INTEGER NOT NULL CHECK (frame_count > 0),
+            occurrence_id TEXT NOT NULL REFERENCES occurrences(occurrence_id),
             PRIMARY KEY (order_id, position),
             UNIQUE (order_id, slot)
         )
@@ -60,7 +62,8 @@ def issue_order(db: Connection, revision_id: int, slots: object) -> VoiceOrder:
     for position, slot in enumerate(slots, start=1):
         if type(slot) is not int or slot not in available or slot in seen:
             raise InvalidOrder('slots must be distinct positions on the specified revision')
-        targets.append(OrderTarget(position, slot, available[slot].frame_count))
+        entry = available[slot]
+        targets.append(OrderTarget(position, entry.slot, entry.frame_count, entry.occurrence_id))
         seen.add(slot)
     spec = get_program(db, revision.program_id)
     cursor = db.execute('''
@@ -68,8 +71,10 @@ def issue_order(db: Connection, revision_id: int, slots: object) -> VoiceOrder:
     ''', (revision.revision_id, spec.sample_rate))
     order_id = cursor.lastrowid
     db.executemany('''
-        INSERT INTO order_targets (order_id, position, slot, frame_count) VALUES (?, ?, ?, ?)
-    ''', ((order_id, item.position, item.slot, item.frame_count) for item in targets))
+        INSERT INTO order_targets (order_id, position, slot, frame_count, occurrence_id)
+        VALUES (?, ?, ?, ?, ?)
+    ''', ((order_id, item.position, item.slot, item.frame_count, item.occurrence_id)
+          for item in targets))
     return VoiceOrder(order_id, revision.revision_id, spec.program_id, spec.sample_rate, tuple(targets))
 
 
@@ -82,7 +87,7 @@ def get_order(db: Connection, order_id: int) -> VoiceOrder:
     if row is None:
         raise UnknownOrder(order_id)
     targets = db.execute('''
-        SELECT position, slot, frame_count FROM order_targets
+        SELECT position, slot, frame_count, occurrence_id FROM order_targets
         WHERE order_id = ? ORDER BY position
     ''', (row[0],))
     return VoiceOrder(*row, tuple(OrderTarget(*item) for item in targets))

@@ -1,0 +1,10 @@
+{
+  "source": {
+    "program_id": "G",
+    "description": "河湾市记忆馆《渡口口述史》取段样例",
+    "pcm": {"sample_rate": 8000, "channels": 1, "encoding": "pcm_s16le", "data": "CgALABQAFQAWAB4AHwA="}
+  },
+  "ranges": [[0, 2], [2, 5], [5, 7]],
+  "voice": {"sample_rate": 8000, "channels": 1, "encoding": "pcm_s16le", "data": "eAB5AHoA"},
+  "replacement": {"sample_rate": 8000, "channels": 1, "encoding": "pcm_s16le", "data": "3ADdAN4A"}
+}
